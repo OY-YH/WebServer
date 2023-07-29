@@ -18,12 +18,24 @@
 #include <string.h>
 
 #include "locker.h"
+#include "noactive/lst_timer.h"
 
+class sort_timer_lst;
+class util_timer;
+
+const bool ET = true;
+#define TIMESLOT 5      // 定时器周期：秒
+
+// http 连接的用户数据类
 class http_conn
 {
 public:
-    static int m_epollfd;   // 所有socket上的事件都被注册到同一个epoll内核事件中，所以设置成静态的
-    static int m_user_count;    //统计用户的数量
+    // 共享对象，没有线程竞争资源，所以不需要互斥
+    static int m_epollfd;               // 所有socket上的事件都被注册到同一个epoll内核事件中，所以设置成静态的
+    static int m_user_count;            //统计用户的数量
+
+    static sort_timer_lst m_timer_lst;  // 定时器链表
+    util_timer* timer;                  // 定时器
 
 public:
     static const int FILENAME_LEN = 200;        // 文件名的最大长度
@@ -120,36 +132,39 @@ private:
     bool add_date(time_t t);
 
 private:
-    int m_sockfd;       //该http连接的socket
-    sockaddr_in m_address;      //通信的socket地址
+    int m_sockfd;                           //该http连接的socket
+    sockaddr_in m_address;                  //通信的socket地址
 
     char m_read_buf[READ_BUFFER_SIZE];      //读缓冲区
-    int m_read_idx;   //标识读缓冲区中以及读入的客户端数据的最后一个字节的下一个位置
+    int m_read_idx;                         //标识读缓冲区中以及读入的客户端数据的最后一个字节的下一个位置
 
     char m_write_buf[ WRITE_BUFFER_SIZE ];  // 写缓冲区
     int m_write_idx;                        // 写缓冲区中待发送的字节数
 
-    int m_checked_idx;  //当前正在分析的字符在读缓冲区的位置
-    int m_start_line;   //当前正在解析的行的起始位置
+    int m_checked_idx;                      //当前正在分析的字符在读缓冲区的位置
+    int m_start_line;                       //当前正在解析的行的起始位置
 
-    CHECK_STATE m_checked_state;    //主状态机当前所处的状态
+    CHECK_STATE m_checked_state;            //主状态机当前所处的状态
 
     //请求行信息的封装
-    char * m_url;           //请求目标文件的文件名
-    char * m_version;       //协议版本，只支持HTTP1.1
-    METHOD m_method;        //请求方法
+    char * m_url;                           //请求目标文件的文件名
+    char * m_version;                       //协议版本，只支持HTTP1.1
+    METHOD m_method;                        //请求方法
     //请求头信息的封装
-    char * m_host;            //主机名
-    bool m_linger;          //判断http请求是否要保持连接
-    int m_content_length;   // HTTP请求体的消息总长度
+    char * m_host;                          //主机名
+    bool m_linger;                          //判断http请求是否要保持连接
+    int m_content_length;                   // HTTP请求体的消息总长度
 
     char m_real_file[ FILENAME_LEN ];       // 客户请求的目标文件的完整路径，其内容等于 doc_root + m_url, doc_root是网站根目录
     struct stat m_file_stat;                // 目标文件的状态。通过它我们可以判断文件是否存在、是否为目录、是否可读，并获取文件大小等信息
     char* m_file_address;                   // 客户请求体的目标文件被mmap到内存中的起始位置
 
     // 我们将采用writev来执行写操作，所以定义下面两个成员，其中m_iv_count表示被写内存块的数量。
-    struct iovec m_iv[2];        //两块内存：一块write_buf,另一块file_address（请求体的
+    struct iovec m_iv[2];                   //两块内存：一块write_buf,另一块file_address（请求体的
     int m_iv_count;
+
+    int bytes_have_send = 0;                // 已经发送的字节
+    int bytes_to_send;        // 将要发送的字节 （m_write_idx）写缓冲区中待发送的字节数
 };
 
 #endif // HTTP_CONN_H

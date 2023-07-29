@@ -13,3 +13,4 @@ HEADERS += \
     locker.h \
     threadpool.h
 
+include($$PWD/noactive/noactive.pri)
