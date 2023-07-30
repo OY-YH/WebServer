@@ -19,10 +19,12 @@
 
 #include "locker.h"
 #include "noactive/lst_timer.h"
+#include "log.h"
 
 class sort_timer_lst;
 class util_timer;
 
+#define COUT_OPEN 1
 const bool ET = true;
 #define TIMESLOT 5      // 定时器周期：秒
 
@@ -33,6 +35,7 @@ public:
     // 共享对象，没有线程竞争资源，所以不需要互斥
     static int m_epollfd;               // 所有socket上的事件都被注册到同一个epoll内核事件中，所以设置成静态的
     static int m_user_count;            //统计用户的数量
+    static int m_request_count;           // 接收到的请求次数
 
     static sort_timer_lst m_timer_lst;  // 定时器链表
     util_timer* timer;                  // 定时器

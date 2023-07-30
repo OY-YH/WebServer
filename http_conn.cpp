@@ -1,8 +1,9 @@
 #include "http_conn.h"
 
 // 类中静态成员需要外部定义
-int http_conn::m_epollfd=-1;
-int http_conn::m_user_count=0;
+int http_conn::m_epollfd = -1;
+int http_conn::m_user_count = 0;
+int http_conn::m_request_count = 0;
 sort_timer_lst http_conn::m_timer_lst;
 
 // 定义HTTP响应的一些状态信息
@@ -80,18 +81,23 @@ http_conn::~http_conn()
 }
 
 //有线程池的工作线程调用，这是处理HTTP请求的入口函数
-void http_conn::process()
+void http_conn::process()       // 线程池中线程的业务处理
 {
+    EMlog(LOGLEVEL_DEBUG, "=======parse request, create response.=======\n");
+
     //解析HTTP请求
+    EMlog(LOGLEVEL_DEBUG,"=============process_reading=============\n");
     HTTP_CODE read_ret=process_read();
-    if(read_ret==NO_REQUEST){   //请求不完整
-        modfd(m_epollfd,m_sockfd,EPOLLIN);
-        return ;
+    EMlog(LOGLEVEL_INFO,"========PROCESS_READ HTTP_CODE : %d========\n", read_ret);
+    if(read_ret==NO_REQUEST){               //请求不完整
+        modfd(m_epollfd,m_sockfd,EPOLLIN);  // 继续监听EPOLLIN （| EPOLLONESHOT）
+        return ;                            // 返回，线程空闲
     }
 
 //    printf("parse request,create response\n");
 
     //生成响应
+    EMlog(LOGLEVEL_DEBUG,"=============process_writting=============\n");
     bool write_ret = process_write( read_ret );
     if ( !write_ret ) {
         close_conn();
@@ -115,6 +121,10 @@ void http_conn::init(int sockfd, const sockaddr_in &addr)
     addfd(m_epollfd,m_sockfd,true,ET);
     m_user_count++;     //总用户数+1
 
+    char ip[16] = "";
+    const char* str = inet_ntop(AF_INET, &addr.sin_addr.s_addr, ip, sizeof(ip));
+    EMlog(LOGLEVEL_INFO, "The No.%d user. sock_fd = %d, ip = %s.\n", m_user_count, sockfd, str);
+
     init();
 
     // 创建定时器，设置其回调函数与超时时间，然后绑定定时器与用户数据，最后将定时器添加到链表timer_lst中
@@ -129,9 +139,10 @@ void http_conn::init(int sockfd, const sockaddr_in &addr)
 void http_conn::close_conn()
 {
     if(m_sockfd!=-1){
+        m_user_count--;     //关闭一个连接，总用户数-1
+        EMlog(LOGLEVEL_INFO, "closing fd: %d, rest user num :%d\n", m_sockfd, m_user_count);
         removefd(m_epollfd,m_sockfd);
         m_sockfd=-1;
-        m_user_count--;     //关闭一个连接，总用户数-1
     }
 }
 
@@ -170,6 +181,10 @@ bool http_conn::read()
 
 //    printf("读取到了数据：\n %s\n",m_read_buf);
 
+    ++m_request_count;
+
+    EMlog(LOGLEVEL_INFO, "sock_fd = %d read done. request cnt = %d\n", m_sockfd, m_request_count);    // 全部读取完毕
+
     return true;
 }
 
@@ -185,6 +200,8 @@ bool http_conn::write()
 
 //    bytes_have_send = 0;    // 已经发送的字节
 //    bytes_to_send = m_write_idx;// 将要发送的字节 （m_write_idx）写缓冲区中待发送的字节数
+
+    EMlog(LOGLEVEL_INFO, "sock_fd = %d writing %d bytes. request cnt = %d\n", m_sockfd, bytes_to_send, m_request_count);
 
     if ( bytes_to_send == 0 ) {
         // 将要发送的字节为0，这一次响应结束。
@@ -254,10 +271,12 @@ void http_conn::init()
     m_host = 0;
     m_linger=false; //默认不保持链接  Connection : keep-alive保持连接
 
-    bzero(m_read_buf,READ_BUFFER_SIZE);         // 清空读缓存
-//    memset(m_read_buf,0,READ_BUFFER_SIZE);
-    bzero(m_write_buf, WRITE_BUFFER_SIZE);      // 清空写缓存
-    bzero(m_real_file, FILENAME_LEN);           // 清空文件路径
+//    bzero(m_read_buf,READ_BUFFER_SIZE);         // 清空读缓存
+    memset(m_read_buf,'\0',READ_BUFFER_SIZE);
+//    bzero(m_write_buf, WRITE_BUFFER_SIZE);      // 清空写缓存
+    memset(m_write_buf,'\0',WRITE_BUFFER_SIZE);
+//    bzero(m_real_file, FILENAME_LEN);           // 清空文件路径
+    memset(m_real_file,'\0', FILENAME_LEN);
 }
 
 //主状态机
@@ -278,7 +297,8 @@ http_conn::HTTP_CODE http_conn::process_read()
 
         m_start_line=m_checked_idx; // 更新下一行的起始位置
 
-        printf("got 1 http line: %s\n",text);
+//        printf("got 1 http line: %s\n",text);
+        EMlog(LOGLEVEL_DEBUG, ">>>>>> %s\n", text);
 
         switch(m_checked_state){
             case CHECK_STATE_REQUESTLINE:
@@ -352,6 +372,7 @@ bool http_conn::process_write(HTTP_CODE ret)
     case FILE_REQUEST:
         add_status_line(200, ok_200_title );
         add_headers(m_file_stat.st_size,time(NULL));
+        EMlog(LOGLEVEL_DEBUG, "<<<<<<< %s", m_file_address);
         // 封装m_iv
         m_iv[ 0 ].iov_base = m_write_buf;
         m_iv[ 0 ].iov_len = m_write_idx;
@@ -449,7 +470,10 @@ http_conn::HTTP_CODE http_conn::parse_request_headers(char *text)
         text += strspn( text, " \t" );
         m_host = text;
     } else {
-        printf( "oop! unknow header %s\n", text );
+//        printf( "oop! unknow header %s\n", text );
+        #ifdef COUT_OPEN
+            EMlog(LOGLEVEL_DEBUG,"oop! unknow header: %s\n", text );
+        #endif
     }
     return NO_REQUEST;
 }
@@ -559,6 +583,7 @@ bool http_conn::add_response(const char *format, ...)    // 可变参数列表
 
 bool http_conn::add_content(const char *content)
 {
+    EMlog(LOGLEVEL_DEBUG,"<<<<<<< %s\n", content );
     return add_response( "%s", content );
 }
 
@@ -568,11 +593,13 @@ bool http_conn::add_content_type()
     // 区分是图片 / html/css
 //    char *format_file = strrchr(m_filename, '.');
 //    return add_response("Content-Type: %s\r\n", format_file == NULL ? "text/html" : (format_file + 1));
+    EMlog(LOGLEVEL_DEBUG,"<<<<<<< Content-Type:%s\r\n", "text/html");
     return add_response("Content-Type:%s\r\n", "text/html");
 }
 
 bool http_conn::add_status_line(int status, const char *title)
 {
+    EMlog(LOGLEVEL_DEBUG,"<<<<<<< %s %d %s\r\n", "HTTP/1.1", status, title);
     return add_response( "%s %d %s\r\n", "HTTP/1.1", status, title );
 }
 
@@ -591,16 +618,19 @@ bool http_conn::add_headers(int content_length,time_t time)
 
 bool http_conn::add_content_length(int content_length)
 {
+    EMlog(LOGLEVEL_DEBUG,"<<<<<<< Content-Length: %d\r\n", content_length);
     return add_response( "Content-Length: %d\r\n", content_length );
 }
 
 bool http_conn::add_linger()
 {
+    EMlog(LOGLEVEL_DEBUG,"<<<<<<< Connection: %s\r\n", ( m_linger == true ) ? "keep-alive" : "close" );
     return add_response( "Connection: %s\r\n", ( m_linger == true ) ? "keep-alive" : "close" );
 }
 
 bool http_conn::add_blank_line()
 {
+    EMlog(LOGLEVEL_DEBUG,"<<<<<<< %s", "\r\n" );
     return add_response( "%s", "\r\n" );
 }
 
@@ -609,5 +639,6 @@ bool http_conn::add_date(time_t t)
 {
     char timebuf[50];
     strftime(timebuf, 80, "%Y-%m-%d %H:%M:%S", localtime(&t));
+    EMlog(LOGLEVEL_DEBUG,"<<<<<<< Date: %s\r\n", timebuf );
     return add_response("Date: %s\r\n", timebuf);
 }

@@ -10,31 +10,40 @@ sort_timer_lst::~sort_timer_lst()
     }
 }
 
+// 将目标定时器timer添加到链表中
 void sort_timer_lst::add_timer(util_timer *timer)
 {
-//    EMlog(LOGLEVEL_DEBUG, "===========adding timer.=============\n");
+    EMlog(LOGLEVEL_DEBUG, "===========adding timer.=============\n");
     if( !timer ) {
+        EMlog(LOGLEVEL_WARN ,"===========timer null.=========\n");
         return;
     }
     if( !head ) {       // 添加的为第一个节点，头结点（尾节点）
         head = tail = timer;
-        return;
-    }
-    /* 如果目标定时器的超时时间小于当前链表中所有定时器的超时时间，则把该定时器插入链表头部,作为链表新的头节点，
+//        return;
+    }else if( timer->exprie < head->exprie ) {
+        /* 如果目标定时器的超时时间小于当前链表中所有定时器的超时时间，则把该定时器插入链表头部,作为链表新的头节点，
            否则就需要调用重载函数 add_timer(),把它插入链表中合适的位置，以保证链表的升序特性 */
-    if( timer->exprie < head->exprie ) {
         timer->next = head;
         head->prev = timer;
         head = timer;
-        return;
+//        return;
+    }else{
+        add_timer(timer, head);
     }
-    add_timer(timer, head);
+
+    EMlog(LOGLEVEL_DEBUG,"===========added timer.==========\n");
 }
 
+/* 当某个定时任务发生变化时，调整对应的定时器在链表中的位置。
+这个函数只考虑被调整的定时器的超时时间延长的情况，即该定时器需要往链表的尾部移动。*/
 void sort_timer_lst::adjust_timer(util_timer *timer)
 {
-    if(!timer)
+    EMlog(LOGLEVEL_DEBUG,"===========adjusting timer.=========\n");
+    if(!timer){
+        EMlog(LOGLEVEL_WARN, "===========timer null.==========\n");
         return ;
+    }
 
     util_timer* temp = timer->next;
     // 如果被调整的目标定时器处在链表的尾部，或者该定时器新的超时时间值仍然小于其下一个定时器的超时时间则不用调整
@@ -53,10 +62,13 @@ void sort_timer_lst::adjust_timer(util_timer *timer)
         timer->next->prev = timer->prev;
         add_timer( timer, timer->next );
     }
+
+    EMlog(LOGLEVEL_DEBUG,"===========adjusted timer.==========\n");
 }
 
 void sort_timer_lst::del_timer(util_timer *timer)
 {
+    EMlog(LOGLEVEL_DEBUG,"===========deleting timer.===========\n");
     if( !timer ) {
         return;
     }
@@ -73,28 +85,32 @@ void sort_timer_lst::del_timer(util_timer *timer)
         head = head->next;
         head->prev = NULL;
         delete timer;
-        return;
-    }
-    /* 如果链表中至少有两个定时器，且目标定时器是链表的尾节点，
+//        return;
+    }else if( timer == tail ) {
+        /* 如果链表中至少有两个定时器，且目标定时器是链表的尾节点，
         则将链表的尾节点重置为原尾节点的前一个节点，然后删除目标定时器。*/
-    if( timer == tail ) {
         tail = tail->prev;
         tail->next = NULL;
         delete timer;
-        return;
+//        return;
+    }else{
+        // 如果目标定时器位于链表的中间，则把它前后的定时器串联起来，然后删除目标定时器
+        timer->prev->next = timer->next;
+        timer->next->prev = timer->prev;
+        delete timer;
     }
-    // 如果目标定时器位于链表的中间，则把它前后的定时器串联起来，然后删除目标定时器
-    timer->prev->next = timer->next;
-    timer->next->prev = timer->prev;
-    delete timer;
+
+    EMlog(LOGLEVEL_DEBUG,"===========deleted timer.===========\n");
 }
 
+/* SIGALARM 信号每次被触发就在其信号处理函数中执行一次 tick() 函数，以处理链表上到期任务。*/
 void sort_timer_lst::tick()
 {
     if( !head ) {
         return;
     }
-    printf( "timer tick\n" );
+//    printf( "timer tick\n" );
+    EMlog(LOGLEVEL_DEBUG, "timer tick.\n" );
     time_t cur = time( NULL );  // 获取当前系统时间
     util_timer* tmp = head;
     // 从头节点开始依次处理每个定时器，直到遇到一个尚未到期的定时器
@@ -120,6 +136,8 @@ void sort_timer_lst::tick()
     }
 }
 
+/* 一个重载的辅助函数，它被公有的 add_timer 函数和 adjust_timer 函数调用
+该函数表示将目标定时器 timer 添加到节点 lst_head 之后的部分链表中 */
 void sort_timer_lst::add_timer(util_timer *timer, util_timer *lst_head)
 {
     util_timer* prev=lst_head;

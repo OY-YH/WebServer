@@ -17,6 +17,7 @@
 #include "threadpool.h"
 #include "http_conn.h"
 #include "noactive/lst_timer.h"
+#include "log.h"
 
 #define MAX_FD 65535   //最大的文件描述符个数
 #define MAX_EVENT_NUMBER 10000  //一次监听的最大数量
@@ -57,8 +58,9 @@ void sig_to_pipe(int sig){
 
 int main(int argc,char* argv[])
 {
-    if(argc<=1){
-        printf("按照如下格式运行：%s port_number\n",basename(argv[0]));
+    if(argc<=1){    // 形参个数，第一个为执行命令的名称
+//        printf("按照如下格式运行：%s port_number\n",basename(argv[0]));
+        EMlog(LOGLEVEL_ERROR,"run as: %s port_number\n", basename(argv[0]));      // argv[0] 可能是带路径的，用basename转换
         exit(-1);
     }
 
@@ -116,7 +118,7 @@ int main(int argc,char* argv[])
     //任务：http连接的任务
     threadpool<http_conn> * pool=NULL;
     try{
-        pool=new threadpool<http_conn>;
+        pool=new threadpool<http_conn>();
     }catch(...){
         exit(-1);
     }
@@ -128,7 +130,8 @@ int main(int argc,char* argv[])
         // 检测事件
         int num=epoll_wait(epollfd,events,MAX_EVENT_NUMBER,-1); // 阻塞，返回事件数量
         if(num<0 && errno!= EINTR){
-            printf("epoll failure!\n");
+//            printf("epoll failure!\n");
+            EMlog(LOGLEVEL_ERROR,"EPOLL failed.\n");
             break;
         }
 
@@ -182,13 +185,14 @@ int main(int argc,char* argv[])
                 }
             }else if(events[i].events& (EPOLLRDHUP|EPOLLHUP|EPOLLERR)){
                 //对方异常断开或者错误等事件
+                EMlog(LOGLEVEL_DEBUG,"-------EPOLLRDHUP | EPOLLHUP | EPOLLERR--------\n");
                 users[sockfd].close_conn();
                 // 移除其对应的定时器
                 http_conn::m_timer_lst.del_timer(users[sockfd].timer);
 
             }else if(events[i].events & EPOLLIN ){
                 //有读的事件发生
-
+                EMlog(LOGLEVEL_DEBUG,"-------EPOLLIN-------\n\n");
                 if(users[sockfd].read()){
                     //一次把所有数据读出来
                     pool->append(users+sockfd);
@@ -199,6 +203,7 @@ int main(int argc,char* argv[])
                 }
             }else if(events[i].events &EPOLLOUT){
                 //写事件发生
+                EMlog(LOGLEVEL_DEBUG, "-------EPOLLOUT--------\n\n");
                 if(!users[sockfd].write()){
                     //一次性写完数据,写失败了
                     users[sockfd].close_conn();
